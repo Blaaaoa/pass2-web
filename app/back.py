@@ -1,208 +1,99 @@
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-import os
 
 app = Flask(__name__)
-CORS(app)  # This enables CORS for all routes
+CORS(app)
 
-@app.route('/run-code', methods=['POST'])
-def run_code():
-    LC = 0
-    mnemonics = {
-        'STOP': ('00', 'IS', 0), 'ADD': ('01', 'IS', 2), 'SUB': ('02', 'IS', 2), 
-        'MUL': ('03', 'IS', 2), 'MOVER': ('04', 'IS', 2), 'MOVEM': ('05', 'IS', 2), 
-        'COMP': ('06', 'IS', 2), 'BC': ('07', 'IS', 2), 'DIV': ('08', 'IS', 2), 
-        'READ': ('09', 'IS', 1), 'PRINT': ('10', 'IS', 1), 'LTORG': ('05', 'AD', 0), 
-        'ORIGIN': ('03', 'AD', 1), 'START': ('01', 'AD', 1), 'EQU': ('04', 'AD', 2), 
-        'DS': ('01', 'DL', 1), 'DC': ('02', 'DL', 1), 'END': ('AD', 0)
-    }
-    REG = {'AREG': 1, 'BREG': 2, 'CREG': 3, 'DREG': 4}
-    symtab = {}
-    pooltab = []
-    words = []
-    symindex = 0
+def decimal_to_hex(decimal):
+    return hex(decimal)[2:].upper()
 
-    def END():
-        nonlocal LC
-        pool = 0
-        z = 0
-        if os.path.exists("inter_code.txt"):
-            os.remove("inter_code.txt")
-        with open("inter_code.txt", "a") as ifp, open("literals.txt", "a+") as lit, open("tmp.txt", "a+") as tmp:
-            lit.truncate(0)
-            tmp.truncate(0)
-            ifp.write("\t(AD,02)\n")
-            lit.seek(0)
-            for x in lit:
-                if "**" in x:
-                    pool += 1
-                    if pool == 1:
-                        pooltab.append(z)
-                    y = x.split()
-                    tmp.write(y[0] + "\t" + str(LC) + "\n")
-                    LC += 1
-                else:
-                    tmp.write(x)
-                z += 1
-            lit.truncate(0)
-            tmp.seek(0)
-            for x in tmp:
-                lit.write(x)
-            tmp.truncate(0)
-        return "END processing complete"
+def pass_one(src_code, optab):
+    saved_labels = []
+    symtab = []
+    intermediate_file = []
 
-    def LTORG():
-        nonlocal LC
-        pool = 0
-        z = 0
-        with open("literals.txt", "a+") as lit, open("tmp.txt", "a+") as tmp:
-            lit.seek(0)
-            x = lit.readlines()
-            i = 0
-            while i < len(x):
-                f = []
-                if "**" in x[i]:
-                    j = 0
-                    pool += 1
-                    if pool == 1:
-                        pooltab.append(z)
-                    while x[i][j] != "'":
-                        j += 1
-                    j += 1
-                    while x[i][j] != "'":
-                        f.append(x[i][j])
-                        j += 1
-                    if i != len(x) - 1:
-                        ifp.write("\t(AD,05)\t(DL,02)(C," + str(f[0]) + ")\n")
-                        y = x[i].split()
-                        tmp.write(y[0] + "\t" + str(LC) + "\n")
-                        LC += 1
-                        ifp.write(str(LC))
-                    else:
-                        ifp.write("\t(AD,05)\t(DL,02)(C," + str(f[0]) + ")\n")
-                        y = x[i].split()
-                        tmp.write(y[0] + "\t" + str(LC) + "\n")
-                        LC += 1
-                else:
-                    tmp.write(x[i])
-                z += 1
-                i += 1
-            lit.truncate(0)
-            tmp.seek(0)
-            for x in tmp:
-                lit.write(x)
-            tmp.truncate(0)
-        return "LTORG processing complete"
+    starting_address = 0
+    location_counter = 0
 
-    def ORIGIN(addr):
-        nonlocal LC
-        with open("inter_code.txt", "a") as ifp:
-            ifp.write("\t(AD,03)\t(C," + str(addr) + ")\n")
-        LC = int(addr)
-        return "ORIGIN processing complete"
+    input_lines = [line.split() for line in src_code]
+    optab_dict = optab
 
-    def DS(size):
-        nonlocal LC
-        with open("inter_code.txt", "a") as ifp:
-            ifp.write("\t(DL,01)\t(C," + size + ")\n")
-        LC += int(size)
-        return "DS processing complete"
+    if len(input_lines) == 0:
+        return {"error": "Source code is empty"}, 400
 
-    def DC(value):
-        nonlocal LC
-        with open("inter_code.txt", "a") as ifp:
-            ifp.write("\t(DL,02)\t(C," + value + ")\n")
-        LC += 1
-        return "DC processing complete"
+    # Handle the starting address
+    if input_lines[0][1] == "START":
+        starting_address = int(input_lines[0][2], 16)
+        location_counter = starting_address
+    else:
+        location_counter = 0
+        starting_address = 0
 
-    def OTHERS(mnemonic, k):
-        nonlocal words, LC, symtab
-        z = mnemonics[mnemonic]
-        result = f"\t({z[1]},{z[0]})\t"
-        y = z[-1]
-        for i in range(1, y + 1):
-            words[k + i] = words[k + i].replace(",", "")
-            if words[k + i] in REG.keys():
-                result += f"(RG,{REG[words[k + i]]})"
-            elif "=" in words[k + i]:
-                with open("literals.txt", "a+") as lit:
-                    lit.seek(0, 2)
-                    lit.write(words[k + i] + "\t**\n")
-                    lit.seek(0)
-                    x = lit.readlines()
-                    result += f"(L,{len(x)})"
+    intermediate_file.append(f"-\t{input_lines[0][0]}\t{input_lines[0][1]}\t{input_lines[0][2]}")
+
+    for i in range(1, len(input_lines)):
+        if len(input_lines[i]) < 2:
+            continue  # Skip lines that don't have enough data
+
+        label, opcode, operand = input_lines[i]
+
+        if opcode == "END":
+            break
+
+        # Handle labels
+        if label != "-":
+            if label in saved_labels:
+                return {"error": f"Duplicate label: {label} found"}, 400
             else:
-                if words[k + i] not in symtab.keys():
-                    symtab[words[k + i]] = ("**", symindex)
-                    result += f"(S,{symindex})"
-                    symindex += 1
-                else:
-                    w = symtab[words[k + i]]
-                    result += f"(S,{w[-1]})"
-        result += "\n"
-        LC += 1
-        return result
+                saved_labels.append(label)
+                symtab.append({"label": label, "address": decimal_to_hex(location_counter)})
 
-    def detect_mn(k):
-        nonlocal words, LC
-        if words[k] == "START":
-            LC = int(words[1])
-            with open("inter_code.txt", "a") as ifp:
-                ifp.write("\t(AD,01)\t(C," + str(LC) + ')\n')
-        elif words[k] == 'END':
-            return END()
-        elif words[k] == "LTORG":
-            return LTORG()
-        elif words[k] == "ORIGIN":
-            return ORIGIN(words[k + 1])
-        elif words[k] == "DS":
-            return DS(words[k + 1])
-        elif words[k] == "DC":
-            return DC(words[k + 1])
+        # Check opcode in optab
+        if opcode in optab_dict:
+            intermediate_file.append(f"{decimal_to_hex(location_counter)}\t{label}\t{opcode}\t{operand}")
+            location_counter += 3  # Increment for instructions
+        elif opcode == "BYTE":
+            intermediate_file.append(f"{decimal_to_hex(location_counter)}\t{label}\t{opcode}\t{operand}")
+            location_counter += len(operand) - 3  # Adjust for BYTE operands
+        elif opcode == "RESB":
+            intermediate_file.append(f"{decimal_to_hex(location_counter)}\t{label}\t{opcode}\t{operand}")
+            location_counter += int(operand)  # Adjust for reserved bytes
+        elif opcode == "WORD":
+            intermediate_file.append(f"{decimal_to_hex(location_counter)}\t{label}\t{opcode}\t{operand}")
+            location_counter += 3  # Increment for WORD instructions
+        elif opcode == "RESW":
+            intermediate_file.append(f"{decimal_to_hex(location_counter)}\t{label}\t{opcode}\t{operand}")
+            location_counter += 3 * int(operand)  # Increment for reserved words
         else:
-            return OTHERS(words[k], k)
+            return {"error": f"Invalid opcode: {opcode}"}, 400
 
-    try:
-        # Get the input from the request body
-        data = request.json
-        input_code = data.get('code', '')
+    # Append the final END statement to intermediate file
+    if len(input_lines) > 1:
+        label, opcode, operand = input_lines[-1]
+        intermediate_file.append(f"{decimal_to_hex(location_counter)}\t{label}\t{opcode}\t{operand}")
 
-        # Process the input code
-        words = input_code.splitlines()
-        result = []
-        
-        for line in words:
-            words = line.split()
-            if LC > 0:
-                result.append(str(LC))
-            if words[0] in mnemonics.keys():
-                result.append(f"Mnemonic: {words[0]} - " + detect_mn(0))
-            else:
-                if words[0] not in symtab.keys():
-                    symtab[words[0]] = (LC, symindex)
-                    symindex += 1
-                else:
-                    x = symtab[words[0]]
-                    if x[0] == "**":
-                        symtab[words[0]] = (LC, x[1])
-                result.append(detect_mn(1))
-        
-        # Save final results
-        with open("SymTab.txt", "a+") as sym, open("PoolTab.txt", "a+") as pool:
-            sym.truncate(0)
-            for x in symtab:
-                sym.write(x + "\t" + str(symtab[x][0]) + "\n")
-            pool.truncate(0)
-            for x in pooltab:
-                pool.write(str(x) + "\n")
-        
-        if os.path.exists("tmp.txt"):
-            os.remove("tmp.txt")
-        
-        return jsonify({'result': result})
+    return {"intermediate_file": intermediate_file, "symtab": symtab}
 
-    except Exception as e:
-        return jsonify({"error": str(e)})
+@app.route('/', methods=['POST'])
+def process_pass_one():
+    data = request.json
 
-if __name__ == '__main__':
+    # Debugging: Print received data
+    print("Received Data:", data)
+
+    if 'srccode' not in data or 'optab' not in data:
+        return jsonify({"error": "Missing required fields: 'srccode' and 'optab'"}), 400
+
+    src_code = data['srccode']
+    optab = data['optab']
+
+    # Process pass one
+    result = pass_one(src_code, optab)
+    
+    if "error" in result:
+        return jsonify(result), 400
+
+    return jsonify(result), 200
+
+if __name__ == "__main__":
     app.run(debug=True)
