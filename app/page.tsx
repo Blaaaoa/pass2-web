@@ -6,18 +6,32 @@ import axios from 'axios';
 export default function Home() {
   const [srccode, setSrcCode] = useState('');
   const [optab, setOptab] = useState('');
+  const [result, setResult] = useState<ResultType | null>(null);
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   interface ResultType {
     intermediate_file: string[];
     symtab: Record<string, any>;
-    program_size: number;
+    object_code: string[];
   }
-
-  const [result, setResult] = useState<ResultType | null>(null);
-  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    if (srccode.trim() === '') {
+      setError('Please enter source code.');
+      return;
+    }
+
+    if (optab.trim() === '') {
+      setError('Please enter opcode table data.');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+    setResult(null);
 
     try {
       const srcCodeArray = srccode.split('\n').map(line => line.trim()).filter(Boolean);
@@ -38,15 +52,16 @@ export default function Home() {
       setResult(response.data);
       setError('');
     } catch (err) {
-      console.error(err);
+      console.error("Error in submission:", err);
       setError('Failed to process the input. Please check your data.');
-      setResult(null);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
     <div className="p-8 max-w-4xl mx-auto bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 text-gray-100 rounded-lg shadow-lg">
-      <h1 className="text-4xl font-bold mb-8 bg-gradient-to-r from-blue-500 via-purple-600 to-pink-500 bg-clip-text text-transparent">Blaaa's Pass1 Processor</h1>
+      <h1 className="text-4xl font-bold mb-8 bg-gradient-to-r from-blue-500 via-purple-600 to-pink-500 bg-clip-text text-transparent">Pass 2 Processor</h1>
       
       <form onSubmit={handleSubmit} className="space-y-8">
         <div className="bg-gradient-to-r from-gray-800 via-gray-700 to-gray-800 p-6 rounded-lg shadow-md">
@@ -57,7 +72,7 @@ export default function Home() {
             onChange={(e) => setSrcCode(e.target.value)}
             rows={12}
             className="w-full p-4 bg-gray-900 border border-gray-600 rounded-lg shadow-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
-            placeholder={`e.g.\nLABEL START 1000\nLABEL1 LDA ALPHA\nSTA BETA`}
+            placeholder={`e.g.\nCOPY START 1000\nLDA ALPHA\nADD ONE\nSUB TWO\nSTA BETA\nALPHA BYTE C'CSE'\nONE RESB 2\nTWO WORD 2\nBETA RESW 2\nEND`}
             required
           />
         </div>
@@ -70,7 +85,7 @@ export default function Home() {
             onChange={(e) => setOptab(e.target.value)}
             rows={6}
             className="w-full p-4 bg-gray-900 border border-gray-600 rounded-lg shadow-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
-            placeholder={`e.g.\nLDA 00\nSTA 0C\nADD 18`}
+            placeholder={`e.g.\nLDA 00\nSTA 0C\nADD 18\nSUB 05`}
             required
           />
         </div>
@@ -78,8 +93,9 @@ export default function Home() {
         <button 
           type="submit" 
           className="w-full py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-gray-100 font-semibold rounded-lg shadow-md hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          disabled={isLoading} 
         >
-          Process Code
+          {isLoading ? 'Processing...' : 'Process Code'}
         </button>
       </form>
 
@@ -93,16 +109,17 @@ export default function Home() {
           
           <div className="bg-gradient-to-r from-gray-800 via-gray-700 to-gray-800 p-6 rounded-lg shadow-md mb-8">
             <h3 className="text-2xl font-semibold mb-4 text-gray-200">Intermediate File:</h3>
-            <pre className="p-4 bg-gray-900 border border-gray-600 rounded-lg overflow-x-auto text-gray-100">
-              {result.intermediate_file.join('\n')}
-            </pre>
+            <pre className="p-4 bg-gray-900 border border-gray-600 rounded-lg overflow-x-auto">{result.intermediate_file.join('\n')}</pre>
           </div>
 
-          <div className="bg-gradient-to-r from-gray-800 via-gray-700 to-gray-800 p-6 rounded-lg shadow-md">
+          <div className="bg-gradient-to-r from-gray-800 via-gray-700 to-gray-800 p-6 rounded-lg shadow-md mb-8">
             <h3 className="text-2xl font-semibold mb-4 text-gray-200">Symbol Table:</h3>
-            <pre className="p-4 bg-gray-900 border border-gray-600 rounded-lg overflow-x-auto text-gray-100">
-              {JSON.stringify(result.symtab, null, 2)}
-            </pre>
+            <pre className="p-4 bg-gray-900 border border-gray-600 rounded-lg overflow-x-auto">{JSON.stringify(result.symtab, null, 2)}</pre>
+          </div>
+
+          <div className="bg-gradient-to-r from-gray-800 via-gray-700 to-gray-800 p-6 rounded-lg shadow-md mb-8">
+            <h3 className="text-2xl font-semibold mb-4 text-gray-200">Object Code:</h3>
+            <pre className="p-4 bg-gray-900 border border-gray-600 rounded-lg overflow-x-auto">{result.object_code.join('\n')}</pre>
           </div>
         </div>
       )}
